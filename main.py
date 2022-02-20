@@ -1,25 +1,25 @@
 import numpy as np
 import cv2
 import random
+import matplotlib.pyplot as plt
 
-#Sharp Filter
-def sharp_filter(img):
-    kernel = np.array([[0, -1, 0],
-                       [-1, 5, -1],
-                       [0, -1, 0]])
-    sharp_img = cv2.filter2D(img, -1, kernel)
-    return sharp_img
+#색 강조
+def color_emphasis(img):
+  img[:, :,0] = img[:, :,0] * 0.1
+  img[:, :,1] = img[:, :,1] * 0.8
+  img[:, :,2] = img[:, :,2] * 1
+  return img
 
 #Color Filter (흰색 노란색 강조)
 def color_filter(img):
-    hls = cv2.cvtColor(img, cv2.COLOR_BGR2HLS)
-    # HLS 검출조건 색조/휘도/채도
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    # HSV 검출조건 색상/채도/명도
     white_lower = np.array([0, 50, 0])
     white_upper = np.array([255, 255, 255])
-    yellow_lower = np.array([20, 0, 115])
+    yellow_lower = np.array([20, 50, 100])
     yellow_upper = np.array([60, 255, 255])
-    white_mask = cv2.inRange(hls, white_lower, white_upper)
-    yellow_mask = cv2.inRange(hls, yellow_lower, yellow_upper)
+    white_mask = cv2.inRange(hsv, white_lower, white_upper)
+    yellow_mask = cv2.inRange(hsv, yellow_lower, yellow_upper)
     mask = cv2.bitwise_or(yellow_mask, white_mask)
     masked = cv2.bitwise_and(img, img, mask = mask)
     return masked
@@ -32,6 +32,20 @@ def grayscale(img):
 def gaussian_blur(img, kernel_size):
     return cv2.GaussianBlur(img, (kernel_size, kernel_size), 0)
     #Sigma 0설정시 커널 크기를 고려하여 자동으로 설정함
+
+#모폴로지 연산 (닫힘연산: 팽창 + 침식 (주변보다 어두운 도이즈 제거 (끊어진 곳 연결 및 구멍 메꿈)))
+def mophology(img):
+  kernel = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
+  mop_img = cv2.morphologyEx(img, cv2.MORPH_CLOSE, kernel)
+  return mop_img
+
+#Sharp Filter
+def sharp_filter(img):
+    kernel = np.array([[0, -1, 0],
+                       [-1, 5, -1],
+                       [0, -1, 0]])
+    sharp_img = cv2.filter2D(img, -1, kernel)
+    return sharp_img
 
 #Canny Edge Detection
 def canny(img, low_threshold, high_threshold):
@@ -51,31 +65,26 @@ def region_of_interest(img, vertices):
 
 #Hough Transformation
 def hough_lines(img, rho, theta, threshold, min_line_len, max_line_gap):
+    height, width = img.shape[:2]
     lines = cv2.HoughLinesP(img, rho, theta, threshold, np.array([]), minLineLength=min_line_len, maxLineGap=max_line_gap)
     #line_img = np.zeros((img.shape[0], img.shape[1], 3), dtype=np.uint8)
     #draw_lines(line_img, lines)
-    return lines
+    if (lines is None): #검출 못했을 때 중간 값으로 반환
+        return np.array([[[int(width / 2), int(height), int(width / 2), int(height / 2)]]])
+    else:
+        return lines
 
 #이미지 합성 (가중치 합)
 def weighted_img(img, initial_img, a, b, c):
     return cv2.addWeighted(initial_img, a, img, b, c) #영상1, 가중치1, 영상2, 가중치2, 결과영상에 추가할 값
 
+'''
 #Draw Lines
 def draw_lines(img, lines, color=[255, 0, 0], thickness=5):
     for line in lines:
         for x1, y1, x2, y2 in line:
             cv2.line(img, (x1, y1), (x2, y2), color, thickness)
-
-#대표선 그리기
-def draw_fitline(img, result_l,result_r, middle_line, color=(255,0,255), thickness = 10):
-    # draw fitting line
-    lane = np.zeros_like(img)
-    cv2.line(lane, (int(result_l[0]) , int(result_l[1])), (int(result_l[2]), int(result_l[3])), color, thickness)
-    cv2.line(lane, (int(result_r[0]) , int(result_r[1])), (int(result_r[2]), int(result_r[3])), color, thickness)
-    cv2.line(lane, (int(middle_line[0]), int(middle_line[1])), (int(middle_line[2]), int(middle_line[3])), color, thickness)
-    # add original image & extracted lane lines
-    final = weighted_img(lane, img, 0.8, 1, 0)
-    return final
+'''
 
 #대표선 구하기
 def get_fitline(img, f_lines):
@@ -88,6 +97,17 @@ def get_fitline(img, f_lines):
 
     result = [x1, y1, x2, y2]
     return result
+
+#대표선 그리기
+def draw_fitline(img, result_l,result_r, middle_line, color=(255,0,255), thickness = 10):
+    # draw fitting line
+    lane = np.zeros_like(img)
+    cv2.line(lane, (int(result_l[0]) , int(result_l[1])), (int(result_l[2]), int(result_l[3])), color, thickness)
+    cv2.line(lane, (int(result_r[0]) , int(result_r[1])), (int(result_r[2]), int(result_r[3])), color, thickness)
+    cv2.line(lane, (int(middle_line[0]), int(middle_line[1])), (int(middle_line[2]), int(middle_line[3])), color, thickness)
+    # add original image & extracted lane lines
+    final = weighted_img(lane, img, 0.8, 1, 0)
+    return final
 
 #검출한 모든 직선 내 점들 수집
 def Collect_points(lines):
@@ -157,21 +177,6 @@ def erase_outliers(par, lines):
     filtered_lines = lines[distance < 13, :]
     return filtered_lines
 
-#Smoothing(프레임 부드럽게)
-def smoothing(lines, pre_frame):
-    # collect frames & print average line
-    lines = np.squeeze(lines)
-    avg_line = np.array([0, 0, 0, 0])
-
-    for ii, line in enumerate(reversed(lines)): #인덱스와 값 모두 추출
-        #매 10프레임마다 평균치를 출력하여 부드러운 움직이게함
-        if ii == pre_frame:
-            break
-        avg_line += line
-    avg_line = avg_line / pre_frame
-
-    return avg_line
-
 #RANSAC 알고리즘
 def ransac_line_fitting(img, lines, min=100):
     global fit_result, l_fit_result, r_fit_result
@@ -201,11 +206,26 @@ def ransac_line_fitting(img, lines, min=100):
     else: #검출 못했을 때 중간 값으로 반환
         return [int(width/2), int(height), int(width/2), int(height/2)]
 
+#Smoothing(프레임 부드럽게)
+def smoothing(lines, pre_frame):
+    # collect frames & print average line
+    lines = np.squeeze(lines)
+    avg_line = np.array([0, 0, 0, 0])
+
+    for ii, line in enumerate(reversed(lines)): #인덱스와 값 모두 추출
+        #매 10프레임마다 평균치를 출력하여 부드러운 움직이게함
+        if ii == pre_frame:
+            break
+        avg_line += line
+    avg_line = avg_line / pre_frame
+
+    return avg_line
+
 #직선 사이 거리 측정을 위한 x값 구하기
 def compute_model_line(line, y):
     m = (line[3] - line[1]) / (line[2] - line[0]) #기울기
-    n = line[1] - m * line[0] #절편
-    x = (1 / m) * y - (n / m)
+    n = line[1] - m * line[0]  # 절편
+    x = np.array([(1 / m) * y - (n / m)])
     return x
 
 #차선 검출
@@ -213,32 +233,32 @@ def detect_lanes_img(img, y):
     height, width = img.shape[:2]
 
     vertices = np.array([[(50, height), ((width / 2) - 100, (height / 2) + 50), ((width / 2) + 100, (height / 2) + 50), ((width -50), height)]], dtype=np.int32)
-    ROI_image1 = region_of_interest(img, vertices)
+    ROI_image = region_of_interest(img, vertices)
 
-    #color_filtered_image = color_filter(ROI_image1)
+    color_emp_image = color_emphasis(ROI_image)
+    color_filtered_image = color_filter(color_emp_image)
+
+    gray_image = grayscale(color_filtered_image)
 
     kernel_size = 3  # 가우시안 필터크기
-    blur_image = gaussian_blur(ROI_image1, kernel_size)
-    sharped_image = sharp_filter(blur_image)
-    gray_image = grayscale(sharped_image)
+    blur_image = gaussian_blur(gray_image, kernel_size)
+    mop_image = mophology(blur_image)
+    sharped_image = sharp_filter(mop_image)
 
     low_threshold = 70  # 하위 임계값 (낮으면 고려하지 않음)
     high_threshold = 210  # 상위 임계값 (크면 엣지로 검출)
-    cannyed_image = canny(gray_image, low_threshold, high_threshold)
-
-    vertices2 = np.array([[(52, height), (width / 2 - 43, height / 2 + 62), (width / 2 + 43, height / 2 + 62), (width - 52, height)]],dtype=np.int32)
-    ROI_image2 = region_of_interest(cannyed_image, vertices2)
+    cannyed_image = canny(sharped_image, low_threshold, high_threshold)
 
     rho = 1
     theta = 1 * np.pi / 180
-    threshold = 30
-    min_line_len = 10  # 선의 최소 길이
-    max_line_gap = 30  # 선 사이의 최대 허용 간격
-    line_arr = hough_lines(ROI_image2, rho, theta, threshold, min_line_len, max_line_gap)
-    line_arr = np.squeeze(line_arr)  # 크기 1인 axis 제거
+    threshold = 50
+    min_line_len = 50  # 선의 최소 길이
+    max_line_gap = 150  # 선 사이의 최대 허용 간격
+    line_arr = hough_lines(cannyed_image, rho, theta, threshold, min_line_len, max_line_gap)
+    #line_arr = np.squeeze(line_arr)  # 크기 1인 axis 제거
 
     # Get slope degree to separate 2 group (+ slope , - slope)
-    slope_degree = (np.arctan2(line_arr[:, 1] - line_arr[:, 3], line_arr[:, 0] - line_arr[:, 2]) * 180) / np.pi
+    slope_degree = (np.arctan2(line_arr[:, :, 1] - line_arr[:, :, 3], line_arr[:, :, 0] - line_arr[:, :, 2]) * 180) / np.pi
 
     # ignore horizontal slope lines
     line_arr = line_arr[np.abs(slope_degree) < 160]
@@ -272,8 +292,9 @@ def detect_lanes_img(img, y):
 
     return final
 
-cap = cv2.VideoCapture('challenge.mp4')
 fit_result, l_fit_result, r_fit_result, L_lane, R_lane, middle_line = [], [], [], [], [], []
+
+cap = cv2.VideoCapture('challenge.mp4')
 
 while(cap.isOpened()):
     ret, frame = cap.read()
@@ -290,10 +311,3 @@ while(cap.isOpened()):
 
 cap.release()
 cv2.destroyAllWindows()
-
-'''
-original_image = cv2.imread('Rec_20220122_141856_D (online-video-cutter.com).mp4_20220122_163428.952.jpg')
-
-cv2.imshow('result', result_image)
-cv2.waitKey(0)
-'''
