@@ -1,6 +1,8 @@
 import numpy as np
 import cv2
 import random
+import cvlib as cv
+from cvlib.object_detection import draw_bbox
 import matplotlib.pyplot as plt
 
 #색 강조
@@ -104,9 +106,12 @@ def draw_fitline(img, result_l,result_r, middle_line, color=(255,0,255), thickne
     lane = np.zeros_like(img)
     cv2.line(lane, (int(result_l[0]) , int(result_l[1])), (int(result_l[2]), int(result_l[3])), color, thickness)
     cv2.line(lane, (int(result_r[0]) , int(result_r[1])), (int(result_r[2]), int(result_r[3])), color, thickness)
-    cv2.line(lane, (int(middle_line[0]), int(middle_line[1])), (int(middle_line[2]), int(middle_line[3])), color, thickness)
-    # add original image & extracted lane lines
-    final = weighted_img(lane, img, 0.8, 1, 0)
+    if(middle_line[1] == 0): #앞에 차량이 없을 때
+        final = weighted_img(lane, img, 0.8, 1, 0)
+    else: #앞에 차량이 있을 때
+        cv2.line(lane, (int(middle_line[0]), int(middle_line[1])), (int(middle_line[2]), int(middle_line[3])), color, thickness)
+        # add original image & extracted lane lines
+        final = weighted_img(lane, img, 0.8, 1, 0)
     return final
 
 #검출한 모든 직선 내 점들 수집
@@ -223,6 +228,9 @@ def smoothing(lines, pre_frame):
 
 #직선 사이 거리 측정을 위한 x값 구하기
 def compute_model_line(line, y):
+    #if ((line[2] - line[0]) == 0): #예외처리
+    #    x = 0
+    #else:
     m = (line[3] - line[1]) / (line[2] - line[0]) #기울기
     n = line[1] - m * line[0]  # 절편
     x = np.array([(1 / m) * y - (n / m)])
@@ -299,15 +307,25 @@ cap = cv2.VideoCapture('challenge.mp4')
 while(cap.isOpened()):
     ret, frame = cap.read()
     height, width = frame.shape[:2]
-    cropped_image = frame[0:height - 35, 0:width].copy()  # 이미지 특정 구역 잘라내기
+    image = frame[0:height - 35, 0:width].copy()  # 이미지 특정 구역 잘라내기
+
+    #차량을 검출할 구역 설정 (차선 앞쪽)
+    area = np.array([[(50, height), ((width / 2) - 50, (height / 2) - 100), ((width / 2) + 50, (height / 2) - 100), ((width - 50), height)]], dtype=np.int32)
+    cropped_image = region_of_interest(image, area)
+
     #if frame.shape[0] !=540: # resizing for challenge video (영상 축소)
     #    frame = cv2.resize(frame, None, fx=3/4, fy=3/4, interpolation=cv2.INTER_AREA)
-    result = detect_lanes_img(cropped_image, y=600)
 
-    cv2.imshow('result', result)
+    # apply object detection (물체 검출)
+    bbox, label, conf = cv.detect_common_objects(cropped_image, confidence=0.5, model='yolov4-tiny')
 
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
+    if(len(bbox) >= 1): #앞에 차량이 있을 때
+        result = detect_lanes_img(image, y=bbox[0][3])
+        out = draw_bbox(result, bbox, label, conf, write_conf=True) # 검출된 물체 가장자리에 바운딩 박스 그리기
+        cv2.imshow('result', out)
+    else: #검출한 차량이 없을 때
+        result = detect_lanes_img(image, y=0)
+        cv2.imshow('result', result)
 
 cap.release()
 cv2.destroyAllWindows()
