@@ -106,9 +106,8 @@ def draw_fitline(img, result_l,result_r, middle_line, color=(255,0,255), thickne
     lane = np.zeros_like(img)
     cv2.line(lane, (int(result_l[0]) , int(result_l[1])), (int(result_l[2]), int(result_l[3])), color, thickness)
     cv2.line(lane, (int(result_r[0]) , int(result_r[1])), (int(result_r[2]), int(result_r[3])), color, thickness)
-    if(middle_line[1] == 0): #앞에 차량이 없을 때
-        final = weighted_img(lane, img, 0.8, 1, 0)
-    else: #앞에 차량이 있을 때
+    final = weighted_img(lane, img, 0.8, 1, 0)
+    if(middle_line[1] != 0): #앞에 차량이 있을 때
         cv2.line(lane, (int(middle_line[0]), int(middle_line[1])), (int(middle_line[2]), int(middle_line[3])), color, thickness)
         # add original image & extracted lane lines
         final = weighted_img(lane, img, 0.8, 1, 0)
@@ -227,10 +226,7 @@ def smoothing(lines, pre_frame):
     return avg_line
 
 #직선 사이 거리 측정을 위한 x값 구하기
-def compute_model_line(line, y):
-    #if ((line[2] - line[0]) == 0): #예외처리
-    #    x = 0
-    #else:
+def compute_middle_line(line, y):
     m = (line[3] - line[1]) / (line[2] - line[0]) #기울기
     n = line[1] - m * line[0]  # 절편
     x = np.array([(1 / m) * y - (n / m)])
@@ -243,25 +239,25 @@ def detect_lanes_img(img, y):
     vertices = np.array([[(50, height), ((width / 2) - 100, (height / 2) + 50), ((width / 2) + 100, (height / 2) + 50), ((width -50), height)]], dtype=np.int32)
     ROI_image = region_of_interest(img, vertices)
 
-    color_emp_image = color_emphasis(ROI_image)
-    color_filtered_image = color_filter(color_emp_image)
+    #color_emp_image = color_emphasis(ROI_image)
+    #color_filtered_image = color_filter(color_emp_image)
 
-    gray_image = grayscale(color_filtered_image)
+    #gray_image = grayscale(color_filtered_image)
 
     kernel_size = 3  # 가우시안 필터크기
-    blur_image = gaussian_blur(gray_image, kernel_size)
-    mop_image = mophology(blur_image)
-    sharped_image = sharp_filter(mop_image)
+    blur_image = gaussian_blur(ROI_image, kernel_size)
+    #mop_image = mophology(blur_image)
+    #sharped_image = sharp_filter(mop_image)
 
     low_threshold = 70  # 하위 임계값 (낮으면 고려하지 않음)
     high_threshold = 210  # 상위 임계값 (크면 엣지로 검출)
-    cannyed_image = canny(sharped_image, low_threshold, high_threshold)
+    cannyed_image = canny(blur_image, low_threshold, high_threshold)
 
     rho = 1
     theta = 1 * np.pi / 180
-    threshold = 50
-    min_line_len = 50  # 선의 최소 길이
-    max_line_gap = 150  # 선 사이의 최대 허용 간격
+    threshold = 30
+    min_line_len = 10  # 선의 최소 길이
+    max_line_gap = 20  # 선 사이의 최대 허용 간격
     line_arr = hough_lines(cannyed_image, rho, theta, threshold, min_line_len, max_line_gap)
     #line_arr = np.squeeze(line_arr)  # 크기 1인 axis 제거
 
@@ -292,8 +288,8 @@ def detect_lanes_img(img, y):
     if len(R_lane) > 10:
         right_fit_line = smoothing(R_lane, 10)
 
-    left_x = compute_model_line(left_fit_line, y)
-    right_x = compute_model_line(right_fit_line, y)
+    left_x = compute_middle_line(left_fit_line, y)
+    right_x = compute_middle_line(right_fit_line, y)
     middle_line = [left_x, y, right_x, y]
 
     final = draw_fitline(img, left_fit_line, right_fit_line, middle_line)
@@ -302,12 +298,12 @@ def detect_lanes_img(img, y):
 
 fit_result, l_fit_result, r_fit_result, L_lane, R_lane, middle_line = [], [], [], [], [], []
 
-cap = cv2.VideoCapture('challenge.mp4')
+cap = cv2.VideoCapture('video1.mp4')
 
 while(cap.isOpened()):
     ret, frame = cap.read()
     height, width = frame.shape[:2]
-    image = frame[0:height - 35, 0:width].copy()  # 이미지 특정 구역 잘라내기
+    image = frame[0:height - 100, 0:width].copy()  # 이미지 특정 구역 잘라내기
 
     #차량을 검출할 구역 설정 (차선 앞쪽)
     area = np.array([[(50, height), ((width / 2) - 50, (height / 2) - 100), ((width / 2) + 50, (height / 2) - 100), ((width - 50), height)]], dtype=np.int32)
@@ -326,6 +322,9 @@ while(cap.isOpened()):
     else: #검출한 차량이 없을 때
         result = detect_lanes_img(image, y=0)
         cv2.imshow('result', result)
+
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
 
 cap.release()
 cv2.destroyAllWindows()
