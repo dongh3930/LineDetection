@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 import cv2
 import random
@@ -19,9 +21,9 @@ def color_filter(img):
     # HSV 검출조건 색상/채도/명도
     #white_lower = np.array([0, 0, 0])
     #white_upper = np.array([255, 100, 255])
-    yellow_lower = np.array([20, 100, 100])
+    yellow_lower = np.array([20, 30, 30])
     yellow_upper = np.array([30, 255, 255])
-    white_mask = cv2.inRange(gray, 100, 255)
+    white_mask = cv2.inRange(gray, 30, 255)
     yellow_mask = cv2.inRange(hsv, yellow_lower, yellow_upper)
     mask = cv2.bitwise_or(yellow_mask, white_mask)
     masked = cv2.bitwise_and(img, img, mask = mask)
@@ -72,10 +74,7 @@ def hough_lines(img, rho, theta, threshold, min_line_len, max_line_gap):
     lines = cv2.HoughLinesP(img, rho, theta, threshold, np.array([]), minLineLength=min_line_len, maxLineGap=max_line_gap)
     #line_img = np.zeros((img.shape[0], img.shape[1], 3), dtype=np.uint8)
     #draw_lines(line_img, lines)
-    if (lines is None): #검출 못했을 때 중간 값으로 반환
-        return np.array([[[int(width / 2), int(height), int(width / 2) + 1, int(height / 2)]]])
-    else:
-        return lines
+    return lines
 
 #이미지 합성 (가중치 합)
 def weighted_img(img, initial_img, a, b, c):
@@ -104,17 +103,17 @@ def get_fitline(img, f_lines):
 #대표선 그리기
 def draw_fitline(img, result_l,result_r, middle_line, color=(255,0,255), thickness = 10):
     D1 = 5 #블랙박스에서의 거리 (M)
+    L1 = result_r[0] - result_l[0]  # 하단 차선 사이 거리
 
     # draw fitting line
     lane = np.zeros_like(img)
     cv2.line(lane, (int(result_l[0]) , int(result_l[1])), (int(result_l[2]), int(result_l[3])), color, thickness)
     cv2.line(lane, (int(result_r[0]) , int(result_r[1])), (int(result_r[2]), int(result_r[3])), color, thickness)
-    L1 = result_r[0] - result_l[0] #하단 차선 사이 거리
     final = weighted_img(lane, img, 0.8, 1, 0)
 
     if(middle_line[1] != 0): #앞에 차량이 있을 때
         L2 = int(middle_line[2]) - int(middle_line[0])  # 상단 차선 사이 거리
-        D2 = round(L1 / L2 * D1, 2)  # 차량 간 거리
+        D2 = round(((L1 / L2) * D1), 2)  # 차량 간 거리
         cv2.putText(lane, "Distance: " + str(D2) + "M", (50,50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255),5)
         #cv2.line(lane, (int(middle_line[0]), int(middle_line[1])), (int(middle_line[2]), int(middle_line[3])), color, thickness)
 
@@ -216,8 +215,6 @@ def ransac_line_fitting(img, lines, min=100):
         else:
             r_fit_result = fit_result
             return r_fit_result
-    else: #검출 못했을 때 중간 값으로 반환
-        return [int(width/2), int(height), int(width/2) + 1, int(height/2)]
 
 #Smoothing(프레임 부드럽게)
 def smoothing(lines, pre_frame):
@@ -226,7 +223,7 @@ def smoothing(lines, pre_frame):
     avg_line = np.array([0, 0, 0, 0])
 
     for ii, line in enumerate(reversed(lines)): #인덱스와 값 모두 추출
-        #매 10프레임마다 평균치를 출력하여 부드러운 움직이게함
+        #매 프레임마다 평균치를 출력하여 부드러운 움직이게함
         if ii == pre_frame:
             break
         avg_line += line
@@ -243,77 +240,69 @@ def compute_middle_line(line, y):
 
 #차선 검출
 def detect_lanes_img(img, y):
+
     height, width = img.shape[:2]
 
-    vertices1 = np.array([[(150, height), ((width / 2) - 50, (height / 2)), ((width / 2) + 50, (height / 2)), ((width - 150), height), ((width / 2) - 250, height), ((width / 2), (height / 2) + 100), ((width / 2) + 250, height)]], dtype=np.int32)
-    ROI_image1 = region_of_interest(img, vertices1)
-
-    mop_image = mophology(ROI_image1)
-    color_emp_img = color_emphasis(mop_image)
-    color_emp_image = weighted_img(color_emp_img, img, 1, 1, 0)
-
-    vertices2 = np.array([[(150, height), ((width / 2) - 100, (height / 2) - 50), ((width / 2) + 100, (height / 2) - 50), ((width - 150), height)]], dtype=np.int32)
-    ROI_image2 = region_of_interest(color_emp_image, vertices2)
-
-    color_filtered_image = color_filter(ROI_image2)
+    color_filtered_img = color_filter(img)
+    mop_image = mophology(color_filtered_img)
 
     #gray_image = grayscale(color_filtered_image)
 
     kernel_size = 3  # 가우시안 필터크기
-    blur_image = gaussian_blur(color_filtered_image, kernel_size)
-    sharped_image = sharp_filter(blur_image)
+    blur_image = gaussian_blur(mop_image, kernel_size)
 
-    low_threshold = 70  # 하위 임계값 (낮으면 고려하지 않음)
-    high_threshold = 210  # 상위 임계값 (크면 엣지로 검출)
-    cannyed_image = canny(sharped_image, low_threshold, high_threshold)
+    low_threshold = 50  # 하위 임계값 (낮으면 고려하지 않음)
+    high_threshold = 150  # 상위 임계값 (크면 엣지로 검출)
+    cannyed_image = canny(blur_image, low_threshold, high_threshold)
+
+    vertices = np.array([[(150, height), ((width / 2) - 50, (height / 2)), ((width / 2) + 50, (height / 2)), ((width - 150), height), ((width / 2) - 250, height), ((width / 2), (height / 2) + 100), ((width / 2) + 250, height)]], dtype=np.int32)
+    ROI_image = region_of_interest(cannyed_image, vertices)
 
     rho = 1
     theta = 1 * np.pi / 180
-    threshold = 50
-    min_line_len = 30  # 선의 최소 길이
-    max_line_gap = 150  # 선 사이의 최대 허용 간격
-    line_arr = hough_lines(cannyed_image, rho, theta, threshold, min_line_len, max_line_gap)
+    threshold = 30
+    min_line_len = 20  # 선의 최소 길이
+    max_line_gap = 100  # 선 사이의 최대 허용 간격
+    line_arr = hough_lines(ROI_image, rho, theta, threshold, min_line_len, max_line_gap)
     #line_arr = np.squeeze(line_arr)  # 크기 1인 axis 제거
+    if (line_arr is not None):
+        # Get slope degree to separate 2 group (+ slope , - slope)
+        slope_degree = (np.arctan2(line_arr[:, :, 1] - line_arr[:, :, 3], line_arr[:, :, 0] - line_arr[:, :, 2]) * 180) / np.pi
 
-    # Get slope degree to separate 2 group (+ slope , - slope)
-    slope_degree = (np.arctan2(line_arr[:, :, 1] - line_arr[:, :, 3], line_arr[:, :, 0] - line_arr[:, :, 2]) * 180) / np.pi
+        # ignore horizontal slope lines
+        line_arr = line_arr[np.abs(slope_degree) < 160]
+        slope_degree = slope_degree[np.abs(slope_degree) < 160]
+        # ignore vertical slope lines
+        line_arr = line_arr[np.abs(slope_degree) > 100]
+        slope_degree = slope_degree[np.abs(slope_degree) > 100]
+        L_lines, R_lines = line_arr[(slope_degree > 0), :], line_arr[(slope_degree < 0), :]
 
-    # ignore horizontal slope lines
-    line_arr = line_arr[np.abs(slope_degree) < 160]
-    slope_degree = slope_degree[np.abs(slope_degree) < 160]
-    # ignore vertical slope lines
-    line_arr = line_arr[np.abs(slope_degree) > 95]
-    slope_degree = slope_degree[np.abs(slope_degree) > 95]
-    L_lines, R_lines = line_arr[(slope_degree > 0), :], line_arr[(slope_degree < 0), :]
+        # interpolation & collecting points for RANSAC
+        L_interp = Collect_points(L_lines)
+        R_interp = Collect_points(R_lines)
 
-    # interpolation & collecting points for RANSAC
-    L_interp = Collect_points(L_lines)
-    R_interp = Collect_points(R_lines)
+        # erase outliers based on best line
+        left_fit_line = ransac_line_fitting(img, L_interp)
+        right_fit_line = ransac_line_fitting(img, R_interp)
 
-    # erase outliers based on best line
-    left_fit_line = ransac_line_fitting(img, L_interp)
-    right_fit_line = ransac_line_fitting(img, R_interp)
+        # smoothing by using previous frames (매 프레임마다 최적의 차선 저장)
+        if (left_fit_line is not None) and (right_fit_line is not None):
+            L_lane.append(left_fit_line), R_lane.append(right_fit_line)
+            if len(L_lane) > 1:
+                left_fit_line = smoothing(L_lane, len(L_lane))
+            if len(R_lane) > 1:
+                right_fit_line = smoothing(R_lane, len(R_lane))
 
-    # smoothing by using previous frames (매 프레임마다 최적의 차선 저장)
-    if (left_fit_line != [int(width/2), int(height), int(width/2) + 1, int(height/2)]) or (right_fit_line != [int(width/2), int(height), int(width/2) + 1, int(height/2)]):
-        L_lane.append(left_fit_line), R_lane.append(right_fit_line)
-        if len(L_lane) > 10:
-            left_fit_line = smoothing(L_lane, 10)
-        if len(R_lane) > 10:
-            right_fit_line = smoothing(R_lane, 10)
+            left_x = compute_middle_line(left_fit_line, y)
+            right_x = compute_middle_line(right_fit_line, y)
+            middle_line = [left_x, y, right_x, y]
 
-        left_x = compute_middle_line(left_fit_line, y)
-        right_x = compute_middle_line(right_fit_line, y)
-        middle_line = [left_x, y, right_x, y]
+            final = draw_fitline(img, left_fit_line, right_fit_line, middle_line)
+            frames.append(final)
+           #return final
 
-        final = draw_fitline(img, left_fit_line, right_fit_line, middle_line)
-
-        return final
-
-fit_result, l_fit_result, r_fit_result, L_lane, R_lane, middle_line = [], [], [], [], [], []
-
-cap = cv2.VideoCapture('video3.mp4')
-
+frames, fit_result, l_fit_result, r_fit_result, L_lane, R_lane, middle_line = [], [], [], [], [], [], []
+cap = cv2.VideoCapture('video1.mp4')
 while(cap.isOpened()):
     ret, frame = cap.read()
     if(int(cap.get(1)) % 4 == 0): #2프레임당 프로세스 실행
@@ -321,22 +310,23 @@ while(cap.isOpened()):
         image = frame[0:height - 35, 0:width].copy()  # 이미지 특정 구역 잘라내기
 
         #차량을 검출할 구역 설정 (차선 앞쪽)
-        area = np.array([[(50, height), ((width / 2) - 75, (height / 2) - 125), ((width / 2) + 75, (height / 2) - 125), ((width - 50), height)]], dtype=np.int32)
+        area = np.array([[(150, height), ((width / 2) - 50, (height / 2) - 50), ((width / 2) + 50, (height / 2) - 50), ((width - 150), height)]], dtype=np.int32)
         cropped_image = region_of_interest(image, area)
 
         #if frame.shape[0] !=540: # resizing for challenge video (영상 축소)
         #    frame = cv2.resize(frame, None, fx=3/4, fy=3/4, interpolation=cv2.INTER_AREA)
 
         # apply object detection (물체 검출)
-        bbox, label, conf = cv.detect_common_objects(cropped_image, confidence=0.5, model='yolov4-tiny')
+        bbox, label, conf = cv.detect_common_objects(cropped_image, confidence=0.25, model='yolov4-tiny')
+        matching = [s for s in label if "car" in s]  # list comprehension
 
-        if(len(bbox) >= 1): #앞에 차량이 있을 때
-            result = detect_lanes_img(image, y=bbox[0][3])
-            out = draw_bbox(result, bbox, label, conf, write_conf=True) # 검출된 물체 가장자리에 바운딩 박스 그리기
+        if(len(matching) >= 1): #앞에 차량이 있을 때
+            detect_lanes_img(image, y=bbox[0][3])
+            out = draw_bbox(frames[-1], bbox, matching, conf, write_conf=True) # 검출된 물체 가장자리에 바운딩 박스 그리기
             cv2.imshow('result', out)
         else: #검출한 차량이 없을 때
-            result = detect_lanes_img(image, y=0)
-            cv2.imshow('result', result)
+            detect_lanes_img(image, y=0)
+            cv2.imshow('result', frames[-1])
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
